@@ -30,7 +30,7 @@ required_packages () {
 :
 }
 
-trap cleanup SIGINT$
+trap cleanup SIGINT
 
 cleanup () {
   # various ways to kill parent and children, not sure which to use...
