@@ -40,20 +40,20 @@ cleanup () {
 }
 
 sync () {
-  if [ -f $lockfile ]; then
+  if [ -f "$lockfile" ]; then
     echo "$(date): rsync already running" >>$errorlog
     #exit 6 # just arbitrary
   else
     echo "$(date) starting rsync" >>$errorlog
     touch $lockfile
-    rsync "${rsync_opts[*]} --exclude=**/.* --exclude=**/*.tmp $watcheddir $rsyncdest >>$synclog 2>>$errorlog
+    rsync "${rsync_opts[*]}" --exclude=**/.* --exclude=**/*.tmp $watcheddir $rsyncdest >>$synclog 2>>$errorlog
     rsync_exit=$?
     curdate=$(date)
-    if [[ $rsync_exit -eq 0 ]]; then
-      [[ $(rm -f $lockfile) ]] || echo "$(curdate) $? could not delete lockfile!" >>$errorlog
-      echo "$(curdate) rsync successfully exited with code $rsync_exit" >>$errorlog
+    if [[ "$rsync_exit" -eq 0 ]]; then
+      [[ $(rm -f "$lockfile") ]] || echo "$(curdate) $? could not delete lockfile!" >>$errorlog
+      echo "$curdate rsync successfully exited with code $rsync_exit" >>$errorlog
     else
-      echo "$(curdate) rsync failed with exit code $rsync_exit" >>$errorlog
+      echo "$curdate rsync failed with exit code $rsync_exit" >>$errorlog
     fi
   fi
 }
@@ -62,16 +62,25 @@ watcher () {
   echo "$(date) spawning inotifywait" >>$errorlog
   
   # also exclude dot and .tmp files
-  if inotifywait -r -e CREATE,MOVED_TO --excludei '^\..*\*.tmp*$' --format '%T %e %w%f' --timefmt '%s' $watcheddir >>$changelog 2>>$errorlog; then
+  if inotifywait -r -e CREATE,MOVED_TO --excludei '^\..*\*.tmp*$' --format '%T %e %w%f' --timefmt '%s' "$watcheddir" >>$changelog 2>>$errorlog; then
     sync & # fork it into it's own subshell
     # TODO: how to capture/eval exit codes from forked shell?
+  else
+    echo "$(date) error spawning inotifywait" >>$errorlog
+    return 1
   fi
 }
 
-# always do a sync at start
+# always do a sync at start, check dir
+# check that host is up?
+curdate=$(date)
+[[ -d "$watcheddir" ]] || { echo "$curdate Source dir does not exist" >>$errorlog; exit 1; }
+hostplus=${rsyncdest#*\@}
+host=${hostplus%:*}
+[[ $(timeout 3 bash -c "cat < /dev/null > /dev/tcp/${host}/22" &>>$errorlog) ]] || { echo "$curdate Remote SSH server \"$host\" does not respond" >>$errorlog; exit 1; }
 sync &
 
 # then enter the infinite loop
-while true; do
-  watcher
+while watcher; do
+  :
 done
