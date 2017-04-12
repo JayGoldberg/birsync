@@ -1,34 +1,29 @@
 #!/usr/bin/env bash
 
 ## @author  "Jay Goldberg" <jaymgoldberg@gmail.com>
-## @date  Thu Dec  2 22:50:09 PST 2015
-## @version  1.0
+## @date  Tue Apr 11 17:44:40 PDT 2017
 ## @license  Apache 2.0
 ## @url  https://github.com/JayGoldberg/birsync
 ## @description  Bash, near real-time file-based sync for Linux based on
 ##               inotify and rsync
-## @usage  ./birsync.bash
+## @usage  ./birsync.sh
+## @require  inotifywait
 #=======================================================================
 
 # constants
-watcheddir="/path/to/dir" # no trailing slash
-rsyncdest='user@host:/share/remotedata/'
+readonly watcheddir='/path/to/dir' # no trailing slash
+readonly rsyncdest='user@host:/share/remotedata/'
+readonly rsyncthrottle='100' # in kbit/s
 
-rsyncsshopt="-e \"ssh -F $USER/.ssh/config\""
-rsyncthrottle="100" # in kbit/s
+readonly changelog='birsync-change.log'
+readonly synclog='birsync-sync.log'
+readonly errorlog='birsync-error.log'
 
-changelog='birsync-change.log'
-synclog='birsync-sync.log'
-errorlog='birsync-error.log'
+rsync_opts=("-e" "ssh -F $USER/.ssh/config" "-avz" "--delete" "--bwlimit=$rsyncthrottle")
 
 # trackers
-selfpid=$$
-lock="lockfile"
-
-required_packages () {
-# inotify
-:
-}
+readonly selfpid=$$
+lockfile="lockfile"
 
 trap cleanup SIGINT
 
@@ -40,24 +35,25 @@ cleanup () {
   #kill -0 ${selfpid}
   #pgrep -P ${selfpid} # not available on embedded
   echo "caught ctrl-c"
-  rm -f $lock
+  rm -f $lockfile
   exit 1
 }
 
-function sync () {
-  if [ -f $lock ]; then
+sync () {
+  if [ -f $lockfile ]; then
     echo "$(date): rsync already running" >>$errorlog
     #exit 6 # just arbitrary
   else
     echo "$(date) starting rsync" >>$errorlog
-    touch $lock
-    rsync -avz --delete --bwlimit=$rsyncthrottle --exclude=**/.* --exclude=**/*.tmp $watcheddir $rsyncdest >>$synclog 2>>$errorlog
-    rsyncexit=$?
-    if [[ $rsyncexit -eq 0 ]]; then
-      rm -f $lock
-      echo "$(date) rsync successfully exited with code $rsyncexit" >>$errorlog
+    touch $lockfile
+    rsync "${rsync_opts[*]} --exclude=**/.* --exclude=**/*.tmp $watcheddir $rsyncdest >>$synclog 2>>$errorlog
+    rsync_exit=$?
+    curdate=$(date)
+    if [[ $rsync_exit -eq 0 ]]; then
+      [[ $(rm -f $lockfile) ]] || echo "$(curdate) $? could not delete lockfile!" >>$errorlog
+      echo "$(curdate) rsync successfully exited with code $rsync_exit" >>$errorlog
     else
-      echo "$(date) rsync failed with exit code $rsyncexit" >>$errorlog
+      echo "$(curdate) rsync failed with exit code $rsync_exit" >>$errorlog
     fi
   fi
 }
@@ -76,7 +72,6 @@ watcher () {
 sync &
 
 # then enter the infinite loop
-while true
-  do
-    watcher
-  done
+while true; do
+  watcher
+done
